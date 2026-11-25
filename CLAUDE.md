@@ -26,6 +26,15 @@ Goal: the user describes a VFX shot in words; you produce it with ComfyUI and de
    - generate plate: `python tools/comfy_vfx.py run --workflow workflows/txt2img_sd15.json --set prompt="..." --set width=1024 --set height=576`
 5. Tell the user: "Resolve'da Workspace > Scripts > ComfyUI Import çalıştır."
 
+## Two-machine setup (Mac edits, Windows renders)
+- Windows: `windows/install_render_pc.ps1` installs ComfyUI portable to `C:\ComfyVFX`, copies this repo to
+  `C:\ComfyVFX\bridge`, and registers the "ComfyVFX Render Worker" scheduled task (`tools/render_worker.py`).
+  The worker polls `<exchange_dir>/requests/*.json`, starts ComfyUI on demand (`comfy_start` in config),
+  writes `<id>.status.json`, and stops ComfyUI after `comfy_idle_minutes`.
+- Mac: `mac/setup_mac.sh`. If you run on the Mac, do NOT call `comfy_vfx.py run` (no ComfyUI there);
+  submit with `python3 ~/.comfy_vfx/tools/comfy_request.py --workflow <name> [--input f] --set prompt=... --wait`
+  and check `comfy_request.py status`. Request `input` paths are relative to the exchange root.
+
 ## New workflows
 The user can build any workflow in ComfyUI and save it with **Workflow > Export (API)** into `workflows/`.
 Make it reusable by replacing values with `{{prompt}}`, `{{input}}`, `{{seed}}`, etc., and add a

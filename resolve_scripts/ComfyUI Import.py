@@ -112,6 +112,34 @@ def main():
             media_pool.AppendToTimeline(new_items)
             print("Timeline'a eklendi.")
     print("Bitti. Yeni klip: %d -> bin '%s'" % (len(new_items), BIN_NAME))
+    report_requests(os.path.dirname(from_comfy))
+
+
+def report_requests(root):
+    """Windows'taki render kuyruğunun durumunu gösterir."""
+    req_dir = os.path.join(root, "requests")
+    if not os.path.isdir(req_dir):
+        return
+    waiting = [f for f in os.listdir(req_dir) if f.endswith(".json") and not f.endswith(".status.json")]
+    running, failed = [], []
+    for f in os.listdir(req_dir):
+        if f.endswith(".status.json"):
+            try:
+                with open(os.path.join(req_dir, f), "r", encoding="utf-8-sig") as fh:
+                    st = json.load(fh)
+            except Exception:
+                continue
+            if st.get("state") == "running":
+                running.append("%s %s" % (st["id"], st.get("progress") or ""))
+            elif st.get("state") == "error" and not os.path.exists(os.path.join(req_dir, f + ".seen")):
+                failed.append("%s: %s" % (st["id"], st.get("error", "")[:200]))
+                open(os.path.join(req_dir, f + ".seen"), "w").close()
+    if waiting:
+        print("Windows kuyruğunda bekleyen: %d" % len(waiting))
+    for r in running:
+        print("Render ediliyor: " + r)
+    for e in failed:
+        print("HATA: " + e)
 
 
 main()

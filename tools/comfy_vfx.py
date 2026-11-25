@@ -275,7 +275,8 @@ def run_once(comfy: Comfy, cfg: dict, wf_tpl: dict, values: dict) -> list[tuple[
 
 
 def run_job(cfg: dict, workflow: Path, inp: Path | None, sets: list[str], name: str | None,
-            per_frame: bool, every: int, max_frames: int, seed: int | None, mp4: bool) -> Path:
+            per_frame: bool, every: int, max_frames: int, seed: int | None, mp4: bool,
+            progress=None) -> Path:
     comfy = Comfy(cfg["comfy_url"])
     _, from_comfy = exchange_dirs(cfg)
     wf_tpl, values = load_workflow(workflow)
@@ -305,6 +306,8 @@ def run_job(cfg: dict, workflow: Path, inp: Path | None, sets: list[str], name: 
             print(f"{len(frames)} kare işlenecek ({fps} fps)", flush=True)
             for i, fr in enumerate(frames, 1):
                 print(f"[{i}/{len(frames)}] {fr.name}", flush=True)
+                if progress:
+                    progress(i, len(frames))
                 values["input"] = comfy.upload(fr)
                 items = [it for it in run_once(comfy, cfg, wf_tpl, values)
                          if Path(it["filename"]).suffix.lower() in IMAGE_EXT]

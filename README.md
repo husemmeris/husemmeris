@@ -1,85 +1,95 @@
-# ComfyUI → DaVinci Resolve VFX Köprüsü (ücretsiz)
+# Mac'te DaVinci + Windows'ta ComfyUI render makinesi (Google Drive üzerinden, ücretsiz)
 
-Claude Code'a Türkçe olarak "bu klibe ateş efekti ekle" dersin. Claude ComfyUI'de üretir, sonuç bulut
-klasörüne (Google Drive) düşer, DaVinci Resolve'da tek tıkla Media Pool'a gelir.
+Mac'te DaVinci Resolve'da çalışırken bir efekt istersin. Windows bilgisayar işi alır, ComfyUI'de render eder,
+sonucu Google Drive üzerinden Mac'e gönderir. İki bilgisayarın aynı ağda olması gerekmez.
 
 ```
- Sen ──► Claude Code (Windows) ──► comfy_vfx.py ──HTTP──► ComfyUI (kendi GPU'n  veya  Kaggle ücretsiz GPU)
-                                         │
-                                         ▼
-                        Google Drive / VFX_Exchange / from_comfy / <iş>/ (PNG dizisi + job.json)
-                                         │  (senkron, ücretsiz 15 GB)
-                                         ▼
-           DaVinci Resolve ► Workspace ► Scripts ► "ComfyUI Import"  ──►  "ComfyUI VFX" bin'i
-
- Ters yön: Resolve ► Scripts ► "ComfyUI Send Timeline Range" ──► VFX_Exchange/to_comfy/*.mp4 ──► Claude/ComfyUI
+ MAC (DaVinci Resolve)                         GOOGLE DRIVE / VFX_Exchange                  WINDOWS (render PC)
+ ─────────────────────                         ───────────────────────────                  ───────────────────
+ Scripts > ComfyUI Request ── In/Out render ──► to_comfy/klip.mp4
+            (prompt penceresi) ── iş isteği ──► requests/<id>.json  ──────────────────────► render_worker (arka planda)
+                                                                                              │ ComfyUI kapalıysa açar
+                                                                                              │ kare kare render
+                                               from_comfy/<iş>/frame_*.png + job.json ◄──────┘ 15 dk boşta kalınca kapatır
+ Scripts > ComfyUI Import ◄─────────────────── (senkron)
+   └► "ComfyUI VFX" bin'i                      requests/<id>.status.json (ilerleme: 12/48 ...)
 ```
 
 ## Maliyet: 0 TL
-| Parça | Ücretsiz seçenek |
-|---|---|
-| Video düzenleme | DaVinci Resolve (ücretsiz sürüm) |
-| AI üretim | ComfyUI (açık kaynak) + SD 1.5 / SDXL / açık modeller |
-| GPU | Kendi NVIDIA kartın (6 GB+ VRAM) **veya** Kaggle (haftada ~30 saat ücretsiz T4) |
-| Bulut aktarım | Google Drive for Desktop (15 GB ücretsiz) — istersen Syncthing/OneDrive da olur |
-| Araçlar | Python, ffmpeg (ücretsiz) |
+DaVinci Resolve (ücretsiz), ComfyUI ve açık modeller, Google Drive (15 GB ücretsiz), Python, ffmpeg.
 
-Tek ücretli kısım: Claude Code'u kullanmak için bir Claude aboneliği gerekir (zaten kullanıyorsun).
+## 1) Windows (render bilgisayarı)
+Gerekenler: NVIDIA ekran kartı (6 GB+ VRAM önerilir), modeller için ~15 GB boş yer.
 
-## Kurulum (Windows)
-1. **DaVinci Resolve** (ücretsiz) kur.
-2. **ComfyUI**: [ComfyUI Desktop / Portable](https://github.com/comfyanonymous/ComfyUI) indir, çalıştır
-   (varsayılan adres `http://127.0.0.1:8188`). Bir checkpoint koy: `models/checkpoints/v1-5-pruned-emaonly.safetensors`.
-   *GPU'n zayıfsa:* `cloud/ComfyUI_Kaggle_Tunnel.ipynb` dosyasını Kaggle'da aç, çıkan `https://...trycloudflare.com` adresini kullan.
-3. **Google Drive for Desktop** kur (bulut aktarım için; aynı PC'de çalışacaksan şart değil).
-4. **Claude Code**'u kur: PowerShell'de `irm https://claude.ai/install.ps1 | iex` (veya Claude Desktop uygulaması).
-5. Bu repoyu klonla ve kurulum script'ini çalıştır:
+1. Zip'i aç (ör. `C:\Users\sen\Downloads\comfy-davinci-vfx`).
+2. Başlat menüsünde **PowerShell**'e sağ tık > **Yönetici olarak çalıştır**, sonra:
    ```powershell
-   git clone https://github.com/husemmeris/husemmeris.git
-   cd husemmeris
-   powershell -ExecutionPolicy Bypass -File windows\setup.ps1
+   cd C:\Users\sen\Downloads\comfy-davinci-vfx
+   powershell -ExecutionPolicy Bypass -File windows\install_render_pc.ps1
    ```
-   Script: Python/ffmpeg kontrol eder, `VFX_Exchange` klasörünü Google Drive'da açar,
-   `%USERPROFILE%\.comfy_vfx\config.json` yazar, Resolve script'lerini kopyalar.
-6. Resolve'u yeniden başlat. **Workspace > Scripts** altında iki script görünür.
-   (Resolve script'leri için Python 3 kurulu olmalı — setup bunu kontrol eder.)
+   Kurulum sırası:
+   - 7-Zip, Git, ffmpeg ve Google Drive'ı kurar (winget ile).
+   - **ComfyUI portable**'ın (NVIDIA) son sürümünü `C:\ComfyVFX` altına kurar. ComfyUI-Manager ve VideoHelperSuite eklentilerini ekler.
+   - SD 1.5 ve RealESRGAN x4 modellerini indirir. SDXL de istersen `-SDXL` ekle.
+   - Google Drive'a giriş yapmanı bekler. **Mac'teki ile aynı Google hesabı** olmalı.
+   - **Render worker**'ı Görev Zamanlayıcı'ya ekler. Worker her oturum açılışında arka planda kendiliğinden başlar.
+   - Fişteyken uykuyu kapatır. İstemezsen `-AllowSleep` ekle.
+   - ComfyUI'yi açıp bir test görseli üretir ve tekrar kapatır.
+3. Bitti. Windows açık ve oturum açık kaldığı sürece istekleri işler.
 
-## Kullanım
-Repo klasöründe `claude` yaz ve konuş:
+## 2) Mac (DaVinci tarafı)
+1. [Google Drive for Desktop](https://www.google.com/drive/download/) kur ve aynı hesapla giriş yap.
+2. Resolve script'leri için [Python 3](https://www.python.org/downloads/macos/) kur (python.org sürümü).
+3. Terminal'de:
+   ```bash
+   cd ~/Downloads/comfy-davinci-vfx
+   bash mac/setup_mac.sh
+   ```
+4. Resolve'u yeniden başlat.
+5. İpucu: Finder'da `VFX_Exchange` klasörüne sağ tık > **Çevrimdışı kullanılabilir**. Böylece dosyalar hemen iner.
 
-> "Resolve'dan to_comfy'ye attığım son klibe sinematik duman ve kıvılcım efekti ver, önce 5 karelik test yap."
+## Kullanım (Mac'te)
+1. Timeline'da efekt istediğin aralığı **I** ve **O** ile işaretle. Kısa tut, her kare ayrı render edilir.
+2. **Workspace > Scripts > ComfyUI Request (Windows Render)**
+   - Workflow'u seç, prompt'u yaz (ör. `thick cinematic smoke, glowing embers`).
+   - Önce **Test kare = 5** ile dene. İyiyse 0 yap (tüm aralık).
+   - **Denoise**: 0.3 hafif değişim, 0.6+ güçlü değişim.
+3. Windows render alır. Durumu görmek ya da sonucu almak için **Workspace > Scripts > ComfyUI Import** çalıştır.
+   Biten işler "ComfyUI VFX" bin'ine düşer, devam edenler ilerlemesiyle listelenir.
 
-> "1920x1080'e yakın, gün batımında fütüristik bir şehir matte painting'i üret."
-
-> "Bu PNG'yi 4x upscale et."
-
-Claude `CLAUDE.md`'deki talimatlarla doğru workflow'u seçer, çalıştırır; bitince Resolve'da
-**Workspace > Scripts > ComfyUI Import** de. Görüntü dizileri tek klip olarak, prompt bilgisi klip yorumunda gelir.
-
-Elle de kullanabilirsin:
-```powershell
-python tools\comfy_vfx.py ping
-python tools\comfy_vfx.py run --workflow workflows\img2img_sd15.json --input klip.mp4 --per-frame --seed 42 --set prompt="fire, embers" --max-frames 5
-python tools\comfy_vfx.py watch --workflow workflows\img2img_sd15.json --per-frame --seed 42 --set prompt="..."   # to_comfy'yi otomatik işler
+Terminal'den veya Mac'teki Claude Code'dan da iş gönderebilirsin:
+```bash
+python3 ~/.comfy_vfx/tools/comfy_request.py --workflow txt2img_sd15 --set prompt="matte painting, city at dusk" --wait
+python3 ~/.comfy_vfx/tools/comfy_request.py --workflow upscale_model --input ~/Desktop/kare.png --wait
+python3 ~/.comfy_vfx/tools/comfy_request.py status      # worker çevrimiçi mi, kuyruk ne durumda
 ```
 
-## Kendi workflow'ların
-ComfyUI'de istediğin workflow'u kur (AnimateDiff, ControlNet, rotoscope/arka plan silme, relight...),
-**Workflow > Export (API)** ile `workflows/` içine kaydet. Değişmesini istediğin değerleri `{{prompt}}`, `{{input}}`,
-`{{seed}}` gibi yer tutucularla değiştir ya da Claude'a "bu workflow'u şablona çevir" de.
-Video çıktı veren node'lar (ör. VideoHelperSuite) da desteklenir — history'deki her çıktı indirilir.
+## Hazır workflow'lar
+| Ad | Ne yapar | Girdi |
+|---|---|---|
+| `img2img_sd15` | Kareyi prompt'a göre dönüştürür (duman, ateş, stil, atmosfer) | Timeline aralığı / görsel |
+| `txt2img_sd15` | Sıfırdan plate, arka plan, matte painting, doku üretir | Yok |
+| `upscale_model` | 4x AI büyütme | Timeline aralığı / görsel |
 
-## Sınırlar (dürüstçe)
-- Resolve **ücretsiz** sürümü dışarıdan script ile kontrol edilemez; bu yüzden içe alma, Resolve menüsünden tek tıkla yapılır.
-  Resolve Studio'da aynı script'ler harici olarak da çalıştırılabilir.
-- Kare kare işleme (`--per-frame`) basit ve sağlamdır ama titreme olabilir; sabit seed ve düşük `denoise` (0.3–0.5) kullan.
-  Daha tutarlı video için AnimateDiff/video modelli workflow'lar ekle.
-- Kaggle oturum adresi her seferinde değişir ve haftalık GPU kotası vardır.
+Yeni workflow eklemek için ComfyUI'de kur (Windows'ta `C:\ComfyVFX\ComfyUI_windows_portable\run_nvidia_gpu.bat` ile aç).
+Sonra **Workflow > Export (API)** ile `C:\ComfyVFX\bridge\workflows\` içine kaydet. Değişecek değerleri `{{prompt}}`,
+`{{input}}`, `{{seed}}` ile değiştir. Worker'ı yeniden başlatınca (ya da Windows'u yeniden açınca) Mac'teki listede görünür.
+
+## Sorun giderme
+- **Worker log'u** (Windows): `%USERPROFILE%\.comfy_vfx\worker.log`. **ComfyUI log'u**: `comfyui.log`.
+- **Worker'ı yeniden başlatmak** (Windows PowerShell):
+  `Stop-ScheduledTask "ComfyVFX Render Worker"; Start-ScheduledTask "ComfyVFX Render Worker"`
+- **"Worker çevrimdışı" uyarısı**: Windows kapalı, uykuda ya da Drive senkronu durmuş olabilir. İstek kaybolmaz, kuyrukta bekler.
+- **Gecikme**: Drive senkronu genelde birkaç saniye ile 1 dakika arasında sürer. Büyük kliplerde yükleme süresi eklenir.
+- **Kareler arası titreme**: sabit seed kullan, denoise'u düşür (0.3–0.45). Daha akıcı sonuç için ileride AnimateDiff workflow'u eklenebilir.
 
 ## Dosyalar
-- `tools/comfy_vfx.py` — ComfyUI API istemcisi (yalnızca standart Python)
-- `workflows/` — `img2img_sd15`, `txt2img_sd15`, `upscale_model` (sadece çekirdek ComfyUI node'ları)
-- `resolve_scripts/` — Resolve'da çalışan içe alma / dışa gönderme script'leri
-- `windows/setup.ps1` — Windows kurulumu
-- `cloud/ComfyUI_Kaggle_Tunnel.ipynb` — ücretsiz bulut GPU'da ComfyUI
-- `CLAUDE.md` — Claude Code'un bu sistemi nasıl kullanacağı
+- `windows/install_render_pc.ps1`: Windows render bilgisayarı kurulumu.
+- `mac/setup_mac.sh`: Mac kurulumu.
+- `tools/render_worker.py`: Windows'ta Drive kuyruğunu işleyen worker. ComfyUI'yi gerektiğinde açar ve kapatır.
+- `tools/comfy_request.py`: Mac'ten iş gönderme ve durum sorgulama.
+- `tools/comfy_vfx.py`: ComfyUI API istemcisi. Yalnızca standart Python kullanır.
+- `resolve_scripts/`: Resolve menü script'leri (Request, Import, Send Timeline Range).
+- `workflows/`: ComfyUI workflow şablonları.
+- `cloud/ComfyUI_Kaggle_Tunnel.ipynb`: Windows'ta GPU yoksa ücretsiz bulut GPU seçeneği.
+- `windows/setup.ps1`: eski tek bilgisayar kurulumu. ComfyUI ve Resolve aynı PC'deyse kullanılır.
