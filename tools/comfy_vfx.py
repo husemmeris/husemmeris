@@ -274,10 +274,53 @@ def run_once(comfy: Comfy, cfg: dict, wf_tpl: dict, values: dict) -> list[tuple[
     return output_items(entry)
 
 
+def render_frames(cfg, comfys: list, wf_tpl: dict, values: dict, frames: list[Path], out_dir: Path,
+                  progress=None) -> str:
+    """Kareleri tüm ComfyUI örneklerine (her GPU'da bir tane) paylaştırır."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    lock, done, exts = threading.Lock(), [0], set()
+    todo = list(enumerate(frames, 1))
+
+    def worker(gi: int, comfy: Comfy):
+        vals = dict(values)
+        vals["prefix"] = f"{values.get('prefix', 'comfy_vfx')}_g{gi}"  # GPU'lar aynı dosyaya yazmasın
+        while True:
+            with lock:
+                if not todo:
+                    return
+                i, fr = todo.pop(0)
+            vals["input"] = comfy.upload(fr)
+            items = [it for it in run_once(comfy, cfg, wf_tpl, vals)
+                     if Path(it["filename"]).suffix.lower() in IMAGE_EXT]
+            if not items:
+                raise SystemExit("Workflow görüntü çıktısı vermedi (SaveImage node'u var mı?)")
+            ext = Path(items[-1]["filename"]).suffix.lower()
+            comfy.download(items[-1], out_dir / f"frame_{i:05d}{ext}")
+            with lock:
+                exts.add(ext)
+                done[0] += 1
+                print(f"[{done[0]}/{len(frames)}] kare {i} (GPU örneği {gi})", flush=True)
+                if progress:
+                    progress(done[0], len(frames))
+
+    if len(comfys) > 1:
+        print(f"{len(comfys)} ComfyUI örneğine paylaştırılıyor", flush=True)
+    with ThreadPoolExecutor(len(comfys)) as ex:
+        futs = [ex.submit(worker, gi, c) for gi, c in enumerate(comfys)]
+        for f in futs:
+            f.result()  # hata varsa yükselt
+    if len(exts) != 1:
+        raise SystemExit(f"Karışık çıktı uzantıları: {exts}")
+    return exts.pop()
+
+
 def run_job(cfg: dict, workflow: Path, inp: Path | None, sets: list[str], name: str | None,
             per_frame: bool, every: int, max_frames: int, seed: int | None, mp4: bool,
-            progress=None) -> Path:
-    comfy = Comfy(cfg["comfy_url"])
+            progress=None, urls: list[str] | None = None) -> Path:
+    urls = urls or cfg.get("comfy_urls") or [cfg["comfy_url"]]
+    comfys = [Comfy(u) for u in urls]
+    comfy = comfys[0]
     _, from_comfy = exchange_dirs(cfg)
     wf_tpl, values = load_workflow(workflow)
     apply_sets(wf_tpl, values, sets)
@@ -304,17 +347,7 @@ def run_job(cfg: dict, workflow: Path, inp: Path | None, sets: list[str], name: 
         with tempfile.TemporaryDirectory() as td:
             frames = extract_frames(cfg, inp, Path(td), every, max_frames)
             print(f"{len(frames)} kare işlenecek ({fps} fps)", flush=True)
-            for i, fr in enumerate(frames, 1):
-                print(f"[{i}/{len(frames)}] {fr.name}", flush=True)
-                if progress:
-                    progress(i, len(frames))
-                values["input"] = comfy.upload(fr)
-                items = [it for it in run_once(comfy, cfg, wf_tpl, values)
-                         if Path(it["filename"]).suffix.lower() in IMAGE_EXT]
-                if not items:
-                    raise SystemExit("Workflow görüntü çıktısı vermedi (SaveImage node'u var mı?)")
-                ext = Path(items[-1]["filename"]).suffix.lower()
-                comfy.download(items[-1], tmp_dir / f"frame_{i:05d}{ext}")
+            ext = render_frames(cfg, comfys, wf_tpl, values, frames, tmp_dir, progress)
         manifest.update(type="sequence", pattern=f"frame_%05d{ext}", start=1, end=len(frames), fps=fps)
     else:
         if inp:

@@ -7,7 +7,7 @@
 #  Seçenekler:
 #     -InstallDir "D:\ComfyVFX"     (varsayılan: C:\ComfyVFX  - modeller büyük, boş yeri olan diski seç)
 #     -ExchangeDir "G:\My Drive\VFX_Exchange"   (otomatik bulunamazsa)
-#     -SDXL                          (SDXL modelini de indir, ~7 GB, 8 GB+ VRAM önerilir)
+#     -SDXL / -NoSDXL                (SDXL ~7 GB; 10 GB+ VRAM'li kart varsa otomatik indirilir)
 #     -SkipModels                    (modelleri indirme)
 #     -AllowSleep                    (bilgisayarın uyku ayarına dokunma)
 #
@@ -17,6 +17,7 @@ param(
     [string]$InstallDir = "C:\ComfyVFX",
     [string]$ExchangeDir = "",
     [switch]$SDXL,
+    [switch]$NoSDXL,
     [switch]$SkipModels,
     [switch]$AllowSleep
 )
@@ -53,8 +54,21 @@ $nvidia = $gpu | Where-Object { $_ -match "NVIDIA" }
 if (-not $nvidia) {
     Warn "NVIDIA kart bulunamadı. ComfyUI CPU'da çok yavaş çalışır. AMD için ComfyUI'nin AMD/DirectML sürümü gerekir."
 } else {
-    try { nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader } catch { Warn "nvidia-smi yok: NVIDIA sürücüsünü güncelle." }
+    try {
+        $gpuRows = nvidia-smi --query-gpu=index,name,memory.total,driver_version,power.limit --format=csv,noheader,nounits
+        $gpuRows | ForEach-Object { Write-Host "  GPU $_" }
+        $maxVram = ($gpuRows | ForEach-Object { [int](($_ -split ",")[2].Trim()) } | Measure-Object -Maximum).Maximum
+        if ($maxVram -ge 10000 -and -not $NoSDXL) { $SDXL = $true; Write-Host "  10 GB+ VRAM var -> SDXL modeli de indirilecek." }
+        if (@($gpuRows).Count -ge 2) { Write-Host "  $(@($gpuRows).Count) GPU bulundu -> her GPU'da ayrı ComfyUI çalışacak, kareler paylaştırılacak." -ForegroundColor Green }
+        else { Write-Host "  Tek GPU. İkinci kartı takınca hiçbir şey yapmana gerek yok: worker yeniden başladığında otomatik kullanır." }
+    } catch { Warn "nvidia-smi çalışmadı: NVIDIA sürücüsünü kur/güncelle (GeForce Experience veya nvidia.com)." }
 }
+$ramGB = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
+$cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+Write-Host "CPU: $cpu  RAM: $ramGB GB"
+$free = (Get-PSDrive ($InstallDir.Substring(0,1))).Free / 1GB
+Write-Host ("Boş alan ({0}:): {1:N0} GB" -f $InstallDir.Substring(0,1), $free)
+if ($free -lt 30) { Warn "Modeller ve ComfyUI için en az 30 GB boş yer önerilir. -InstallDir ile başka disk seç." }
 
 Step "2) Gerekli araçlar (winget)"
 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { throw "winget yok. Microsoft Store'dan 'App Installer'ı kur ve tekrar dene." }
@@ -139,7 +153,12 @@ $cfg["comfy_url"] = "http://127.0.0.1:8188"
 $cfg["exchange_dir"] = $ExchangeDir.Replace('\', '/')
 $cfg["ffmpeg"] = $(if ($ffmpeg) { $ffmpeg.Replace('\', '/') } else { "ffmpeg" })
 $cfg["comfy_dir"] = $portable.Replace('\', '/')
-$cfg["comfy_start"] = @($py.Replace('\', '/'), "-s", "ComfyUI/main.py", "--windows-standalone-build", "--listen", "127.0.0.1", "--port", "8188")
+# Her GPU için ayrı ComfyUI: {gpu} ve {port} worker tarafından doldurulur (GPU'lar nvidia-smi ile otomatik bulunur)
+$cfg["comfy_start_template"] = @($py.Replace('\', '/'), "-s", "ComfyUI/main.py", "--windows-standalone-build",
+    "--listen", "127.0.0.1", "--port", "{port}", "--cuda-device", "{gpu}",
+    "--output-directory", "ComfyUI/output/gpu{gpu}", "--temp-directory", "ComfyUI/temp/gpu{gpu}")
+$cfg["base_port"] = 8188
+$cfg.Remove("comfy_start")
 if (-not $cfg.Contains("comfy_idle_minutes")) { $cfg["comfy_idle_minutes"] = 15 }
 if (-not $cfg.Contains("timeout_seconds")) { $cfg["timeout_seconds"] = 3600 }
 if (-not $cfg.Contains("default_fps")) { $cfg["default_fps"] = 24 }

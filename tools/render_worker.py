@@ -52,52 +52,116 @@ def write_json(path: Path, data: dict):
     os.replace(tmp, path)
 
 
-class ComfyProcess:
-    """ComfyUI'yi gerektiğinde başlatır, boşta kalınca kapatır."""
+def detect_gpus(cfg: dict) -> list[dict]:
+    """nvidia-smi ile ekran kartlarını bulur. Yeni kart takılınca worker yeniden başlayınca otomatik kullanılır."""
+    if cfg.get("gpus") is not None:
+        return [{"index": int(g), "name": f"GPU {g}", "mem_mb": 0} for g in cfg["gpus"]]
+    try:
+        out = subprocess.check_output(["nvidia-smi", "--query-gpu=index,name,memory.total",
+                                       "--format=csv,noheader,nounits"], text=True, timeout=20)
+        gpus = []
+        for line in out.strip().splitlines():
+            idx, name, mem = [x.strip() for x in line.split(",")]
+            gpus.append({"index": int(idx), "name": name, "mem_mb": int(float(mem))})
+        return gpus
+    except Exception:
+        return []
 
-    def __init__(self, cfg: dict):
-        self.cfg = cfg
+
+class ComfyInstance:
+    def __init__(self, url: str, cmd, cwd, label: str):
+        self.url, self.cmd, self.cwd, self.label = url, cmd, cwd, label
         self.proc: subprocess.Popen | None = None
-        self.last_used = time.time()
 
     def alive(self) -> bool:
         try:
-            with urllib.request.urlopen(self.cfg["comfy_url"] + "/system_stats", timeout=3):
+            with urllib.request.urlopen(self.url + "/system_stats", timeout=3):
                 return True
         except Exception:
             return False
 
-    def ensure(self):
-        self.last_used = time.time()
-        if self.alive():
+    def start(self):
+        if self.alive() or not self.cmd:
             return
-        cmd = self.cfg.get("comfy_start")
-        if not cmd:
-            raise SystemExit("ComfyUI kapalı ve config'te 'comfy_start' yok.")
-        log("ComfyUI başlatılıyor...")
-        logf = open(Path.home() / ".comfy_vfx" / "comfyui.log", "a", encoding="utf-8")
+        log(f"ComfyUI başlatılıyor: {self.label} ({self.url})")
+        logf = open(Path.home() / ".comfy_vfx" / f"comfyui_{self.label}.log", "a", encoding="utf-8")
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        self.proc = subprocess.Popen(cmd, cwd=self.cfg.get("comfy_dir") or None,
-                                     stdout=logf, stderr=subprocess.STDOUT, creationflags=flags)
-        for _ in range(240):  # en fazla 4 dk (ilk açılışta model taraması uzun sürebilir)
-            if self.proc.poll() is not None:
-                raise SystemExit("ComfyUI açılamadı, bkz. ~/.comfy_vfx/comfyui.log")
-            if self.alive():
-                log("ComfyUI hazır.")
-                return
-            time.sleep(1)
-        raise SystemExit("ComfyUI 4 dakikada açılmadı.")
+        self.proc = subprocess.Popen(self.cmd, cwd=self.cwd or None, stdout=logf,
+                                     stderr=subprocess.STDOUT, creationflags=flags)
 
-    def maybe_stop(self):
-        idle = float(self.cfg.get("comfy_idle_minutes", 15)) * 60
-        if self.proc and self.proc.poll() is None and time.time() - self.last_used > idle:
-            log("Boşta -> ComfyUI kapatılıyor.")
+    def stop(self):
+        if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:
                 self.proc.wait(30)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
-            self.proc = None
+        self.proc = None
+
+
+class ComfyPool:
+    """Her GPU için bir ComfyUI. Gerektiğinde açılır, boşta kalınca kapanır."""
+
+    def __init__(self, cfg: dict):
+        self.cfg = cfg
+        self.last_used = time.time()
+        self.instances: list[ComfyInstance] = []
+        self.build()
+
+    def build(self):
+        cfg, inst = self.cfg, []
+        tpl = cfg.get("comfy_start_template")
+        if tpl:
+            gpus = detect_gpus(cfg) or [{"index": 0, "name": "GPU 0", "mem_mb": 0}]
+            if cfg.get("max_gpus"):
+                gpus = gpus[: int(cfg["max_gpus"])]
+            base = int(cfg.get("base_port", 8188))
+            for n, g in enumerate(gpus):
+                port = base + n
+                cmd = [str(x).replace("{port}", str(port)).replace("{gpu}", str(g["index"])) for x in tpl]
+                inst.append(ComfyInstance(f"http://127.0.0.1:{port}", cmd, cfg.get("comfy_dir"),
+                                          f"gpu{g['index']}"))
+            log("GPU'lar: " + ", ".join(f"{g['index']}={g['name']} ({g['mem_mb']} MB)" for g in gpus))
+        else:
+            inst.append(ComfyInstance(cfg["comfy_url"], cfg.get("comfy_start"), cfg.get("comfy_dir"), "gpu0"))
+        self.instances = inst
+
+    def any_alive(self) -> bool:
+        return any(i.alive() for i in self.instances)
+
+    def ensure(self) -> list[str]:
+        """Tüm örnekleri açar; açılabilenlerin URL'lerini döndürür."""
+        self.last_used = time.time()
+        if not any(i.proc and i.proc.poll() is None for i in self.instances) and not self.any_alive():
+            self.build()  # kapalıyken yeni takılan GPU'yu da yakala
+        for i in self.instances:
+            i.start()
+        deadline = time.time() + 240
+        pending = [i for i in self.instances]
+        ready = []
+        while pending and time.time() < deadline:
+            for i in list(pending):
+                if i.alive():
+                    ready.append(i); pending.remove(i)
+                elif i.proc is not None and i.proc.poll() is not None:
+                    log(f"ComfyUI {i.label} açılamadı (log: comfyui_{i.label}.log)"); pending.remove(i)
+                elif i.proc is None and not i.cmd:
+                    pending.remove(i)
+            if pending:
+                time.sleep(1)
+        if not ready:
+            raise SystemExit("Hiçbir ComfyUI örneği açılamadı. ~/.comfy_vfx/comfyui_gpu*.log dosyalarına bak.")
+        if pending:
+            log("Zamanında açılmayanlar atlandı: " + ", ".join(i.label for i in pending))
+        log("Hazır: " + ", ".join(i.label for i in ready))
+        return [i.url for i in self.instances if i in ready]
+
+    def maybe_stop(self):
+        idle = float(self.cfg.get("comfy_idle_minutes", 15)) * 60
+        if time.time() - self.last_used > idle and any(i.proc and i.proc.poll() is None for i in self.instances):
+            log("Boşta -> ComfyUI kapatılıyor.")
+            for i in self.instances:
+                i.stop()
 
 
 def resolve_workflow(name: str) -> Path:
@@ -124,7 +188,7 @@ def wait_synced(path: Path, timeout=1800) -> Path:
     raise SystemExit(f"Girdi dosyası Drive'dan gelmedi: {path}")
 
 
-def process(cfg: dict, comfy: ComfyProcess, req_file: Path, root: Path):
+def process(cfg: dict, comfy: ComfyPool, req_file: Path, root: Path):
     req = json.loads(req_file.read_text(encoding="utf-8-sig"))
     rid = req.get("id") or req_file.stem
     status_file = req_file.with_name(rid + ".status.json")
@@ -143,11 +207,12 @@ def process(cfg: dict, comfy: ComfyProcess, req_file: Path, root: Path):
         inp = None
         if req.get("input"):
             inp = wait_synced(root / req["input"])
-        comfy.ensure()
+        urls = comfy.ensure()
         sets = [f"{k}={v}" for k, v in (req.get("set") or {}).items()]
         job_dir = cv.run_job(cfg, wf, inp, sets, req.get("name") or rid, bool(req.get("per_frame")),
                              int(req.get("every", 1)), int(req.get("max_frames", 0)),
-                             req.get("seed"), not req.get("no_mp4", False), progress=progress)
+                             req.get("seed"), not req.get("no_mp4", False), progress=progress,
+                             urls=urls)
         status.update(state="done", output=f"from_comfy/{job_dir.name}",
                       finished=time.strftime("%Y-%m-%d %H:%M:%S"))
         log(f"İş bitti: {rid} -> {job_dir.name}")
@@ -186,7 +251,7 @@ def main():
     root = to_comfy.parent
     req_dir = root / "requests"
     req_dir.mkdir(exist_ok=True)
-    comfy = ComfyProcess(cfg)
+    comfy = ComfyPool(cfg)
     publish_workflows(root)
     log(f"Worker hazır. İzlenen klasör: {req_dir}")
     write_json(root / "worker_heartbeat.json", {"worker": os.environ.get("COMPUTERNAME", "worker"),
@@ -206,7 +271,8 @@ def main():
             write_json(root / "worker_heartbeat.json",
                        {"worker": os.environ.get("COMPUTERNAME", "worker"),
                         "last_seen": time.strftime("%Y-%m-%d %H:%M:%S"), "epoch": int(beat),
-                        "comfy_running": comfy.alive()})
+                        "comfy_running": comfy.any_alive(),
+                        "gpus": [i.label for i in comfy.instances]})
         comfy.maybe_stop()
         time.sleep(float(cfg.get("worker_poll_seconds", 5)))
 
