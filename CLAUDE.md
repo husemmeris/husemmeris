@@ -27,8 +27,8 @@ Goal: the user describes a VFX shot in words; you produce it with ComfyUI and de
 5. Tell the user: "Resolve'da Workspace > Scripts > ComfyUI Import çalıştır."
 
 ## Two-machine setup (Mac edits, Windows renders)
-- Windows: `windows/install_render_pc.ps1` installs ComfyUI portable to `C:\ComfyVFX`, copies this repo to
-  `C:\ComfyVFX\bridge`, and registers the "ComfyVFX Render Worker" scheduled task (`tools/render_worker.py`).
+- Windows: `windows/install_render_pc.ps1` installs ComfyUI portable to `X:\ComfyVFX` (if X: exists, else C:), copies this repo to
+  `<InstallDir>\bridge`, and registers the "ComfyVFX Render Worker" scheduled task (`tools/render_worker.py`).
   The worker polls `<exchange_dir>/requests/*.json`, starts ComfyUI on demand (`comfy_start` in config),
   writes `<id>.status.json`, and stops ComfyUI after `comfy_idle_minutes`.
 - Mac: `mac/setup_mac.sh`. If you run on the Mac, do NOT call `comfy_vfx.py run` (no ComfyUI there);

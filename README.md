@@ -22,14 +22,14 @@ DaVinci Resolve (ücretsiz), ComfyUI ve açık modeller, Google Drive (15 GB üc
 Gerekenler: NVIDIA ekran kartı (6 GB+ VRAM önerilir), modeller için ~15 GB boş yer.
 
 1. Zip'i aç (ör. `C:\Users\sen\Downloads\comfy-davinci-vfx`).
-2. Başlat menüsünde **PowerShell**'e sağ tık > **Yönetici olarak çalıştır**, sonra:
+2. Zip'teki **`KUR_WINDOWS.bat`** dosyasına çift tıkla ve yönetici iznini onayla. Her şey **X:\ComfyVFX** klasörüne kurulur.
+   Elle çalıştırmak ya da başka bir disk seçmek istersen yönetici PowerShell'de:
    ```powershell
-   cd C:\Users\sen\Downloads\comfy-davinci-vfx
-   powershell -ExecutionPolicy Bypass -File windows\install_render_pc.ps1
+   powershell -ExecutionPolicy Bypass -File windows\install_render_pc.ps1 -InstallDir X:\ComfyVFX
    ```
    Kurulum sırası:
    - 7-Zip, Git, ffmpeg ve Google Drive'ı kurar (winget ile).
-   - **ComfyUI portable**'ın (NVIDIA) son sürümünü `C:\ComfyVFX` altına kurar. ComfyUI-Manager ve VideoHelperSuite eklentilerini ekler.
+   - **ComfyUI portable**'ın (NVIDIA) son sürümünü `X:\ComfyVFX` altına kurar (X: yoksa C:). ComfyUI-Manager ve VideoHelperSuite eklentilerini ekler.
    - SD 1.5 ve RealESRGAN x4 modellerini indirir. SDXL de istersen `-SDXL` ekle.
    - Google Drive'a giriş yapmanı bekler. **Mac'teki ile aynı Google hesabı** olmalı.
    - **Render worker**'ı Görev Zamanlayıcı'ya ekler. Worker her oturum açılışında arka planda kendiliğinden başlar.
@@ -71,8 +71,8 @@ python3 ~/.comfy_vfx/tools/comfy_request.py status      # worker çevrimiçi mi,
 | `txt2img_sd15` | Sıfırdan plate, arka plan, matte painting, doku üretir | Yok |
 | `upscale_model` | 4x AI büyütme | Timeline aralığı / görsel |
 
-Yeni workflow eklemek için ComfyUI'de kur (Windows'ta `C:\ComfyVFX\ComfyUI_windows_portable\run_nvidia_gpu.bat` ile aç).
-Sonra **Workflow > Export (API)** ile `C:\ComfyVFX\bridge\workflows\` içine kaydet. Değişecek değerleri `{{prompt}}`,
+Yeni workflow eklemek için ComfyUI'de kur (Windows'ta `X:\ComfyVFX\ComfyUI_windows_portable\run_nvidia_gpu.bat` ile aç).
+Sonra **Workflow > Export (API)** ile `X:\ComfyVFX\bridge\workflows\` içine kaydet. Değişecek değerleri `{{prompt}}`,
 `{{input}}`, `{{seed}}` ile değiştir. Worker'ı yeniden başlatınca (ya da Windows'u yeniden açınca) Mac'teki listede görünür.
 
 ## Sorun giderme

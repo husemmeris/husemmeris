@@ -5,7 +5,7 @@
 #     powershell -ExecutionPolicy Bypass -File windows\install_render_pc.ps1
 #
 #  Seçenekler:
-#     -InstallDir "D:\ComfyVFX"     (varsayılan: C:\ComfyVFX  - modeller büyük, boş yeri olan diski seç)
+#     -InstallDir "D:\ComfyVFX"     (varsayılan: X:\ComfyVFX varsa X diski, yoksa C:\ComfyVFX)
 #     -ExchangeDir "G:\My Drive\VFX_Exchange"   (otomatik bulunamazsa)
 #     -SDXL / -NoSDXL                (SDXL ~7 GB; 10 GB+ VRAM'li kart varsa otomatik indirilir)
 #     -SkipModels                    (modelleri indirme)
@@ -14,7 +14,7 @@
 #  Tekrar çalıştırmak güvenlidir: var olanı atlar, eksikleri tamamlar.
 # =====================================================================================
 param(
-    [string]$InstallDir = "C:\ComfyVFX",
+    [string]$InstallDir = "",
     [string]$ExchangeDir = "",
     [switch]$SDXL,
     [switch]$NoSDXL,
@@ -24,6 +24,14 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"   # Invoke-WebRequest'i çok hızlandırır
 $Src = Split-Path -Parent $PSScriptRoot
+if (-not $InstallDir) { $InstallDir = $(if (Test-Path "X:\") { "X:\ComfyVFX" } else { "C:\ComfyVFX" }) }
+# İndirme önbellekleri de aynı diske (C: dolmasın)
+$cacheRoot = Join-Path $InstallDir "cache"
+New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
+$env:PIP_CACHE_DIR = Join-Path $cacheRoot "pip"
+$env:HF_HOME = Join-Path $cacheRoot "huggingface"
+[Environment]::SetEnvironmentVariable("HF_HOME", $env:HF_HOME, "User")
+Write-Host "Kurulum klasörü: $InstallDir" -ForegroundColor Green
 
 function Step($t) { Write-Host "`n== $t" -ForegroundColor Cyan }
 function Warn($t) { Write-Host "UYARI: $t" -ForegroundColor Yellow }
