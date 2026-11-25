@@ -1,0 +1,10 @@
+{
+  "_meta_comfy_vfx": {
+    "description": "AI upscale (e.g. 4x-UltraSharp / RealESRGAN). Put the model in ComfyUI/models/upscale_models. Video: --per-frame.",
+    "defaults": {"upscale_model": "RealESRGAN_x4plus.pth", "prefix": "comfy_vfx_up"}
+  },
+  "1": {"class_type": "UpscaleModelLoader", "inputs": {"model_name": "{{upscale_model}}"}},
+  "2": {"class_type": "LoadImage", "inputs": {"image": "{{input}}"}},
+  "3": {"class_type": "ImageUpscaleWithModel", "inputs": {"upscale_model": ["1", 0], "image": ["2", 0]}},
+  "4": {"class_type": "SaveImage", "inputs": {"images": ["3", 0], "filename_prefix": "{{prefix}}"}}
+}

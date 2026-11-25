@@ -1,0 +1,22 @@
+{
+  "_meta_comfy_vfx": {
+    "description": "Text-to-image: plates, backgrounds, matte paintings, textures. No input needed. batch>1 => image sequence.",
+    "defaults": {
+      "checkpoint": "v1-5-pruned-emaonly.safetensors",
+      "prompt": "matte painting, epic fantasy city at dusk, cinematic lighting",
+      "negative": "blurry, lowres, watermark, text",
+      "width": 768, "height": 432, "batch": 1, "steps": 25, "cfg": 7,
+      "prefix": "comfy_vfx"
+    }
+  },
+  "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "{{checkpoint}}"}},
+  "2": {"class_type": "EmptyLatentImage", "inputs": {"width": "{{width}}", "height": "{{height}}", "batch_size": "{{batch}}"}},
+  "4": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{prompt}}", "clip": ["1", 1]}},
+  "5": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{negative}}", "clip": ["1", 1]}},
+  "6": {"class_type": "KSampler", "inputs": {
+        "model": ["1", 0], "positive": ["4", 0], "negative": ["5", 0], "latent_image": ["2", 0],
+        "seed": "{{seed}}", "steps": "{{steps}}", "cfg": "{{cfg}}",
+        "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
+  "7": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["1", 2]}},
+  "8": {"class_type": "SaveImage", "inputs": {"images": ["7", 0], "filename_prefix": "{{prefix}}"}}
+}
